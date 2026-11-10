@@ -34,6 +34,10 @@ LOG = logging.getLogger("chromo-bro")
 HELPER_FLAGS = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
 
 
+class OperationInProgress(RuntimeError):
+    """A scheduled or manual operation is already doing this work."""
+
+
 def utc_now():
     return dt.datetime.now(dt.timezone.utc).isoformat()
 
@@ -147,7 +151,7 @@ def exclusive_lock(path):
         try:
             msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
         except OSError as exc:
-            raise RuntimeError("Another operation holds " + str(path)) from exc
+            raise OperationInProgress("Another operation holds " + str(path)) from exc
         try:
             yield
         finally:
@@ -496,6 +500,9 @@ def main():
             print(json.dumps({"build": read_json(config["build_root"] / "status.json"),
                               "installed": read_json(config["install_root"] / "chromo-bro-installed.json"),
                               "pending": read_json(config["build_root"] / "pending.json")}, indent=2))
+        return 0
+    except OperationInProgress as exc:
+        LOG.info("%s; this invocation will skip the overlapping run", exc)
         return 0
     except Exception as exc:
         LOG.exception("Operation failed")
