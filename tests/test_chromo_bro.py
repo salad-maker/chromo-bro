@@ -1,11 +1,20 @@
 from pathlib import Path
+import multiprocessing
 import sys
 import tempfile
+import time
 import unittest
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import chromo_bro as app
+
+
+def launch_with_marker(config, attempted, launched):
+    app.install_pending = lambda _: False
+    app.subprocess.Popen = lambda *args, **kwargs: Path(launched).write_text("launched")
+    Path(attempted).write_text("attempted")
+    app.launch(config, [])
 
 
 class ReleaseTests(unittest.TestCase):
@@ -44,6 +53,32 @@ class ReleaseTests(unittest.TestCase):
 
 
 class PackageTests(unittest.TestCase):
+    def test_launcher_waits_for_installer_before_creating_browser_process(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "installed/bin").mkdir(parents=True)
+            (root / "installed/bin/chrome.exe").write_bytes(b"browser")
+            config = {"build_root": root, "install_root": root / "installed"}
+            attempted, launched = root / "attempted", root / "launched"
+            worker = multiprocessing.Process(target=launch_with_marker,
+                                             args=(config, str(attempted), str(launched)))
+            try:
+                with app.exclusive_lock(root / "locks/install.lock"):
+                    worker.start()
+                    deadline = time.monotonic() + 10
+                    while not attempted.exists() and time.monotonic() < deadline:
+                        time.sleep(0.05)
+                    self.assertTrue(attempted.exists())
+                    time.sleep(0.2)
+                    self.assertFalse(launched.exists())
+                worker.join(10)
+                self.assertEqual(worker.exitcode, 0)
+                self.assertTrue(launched.exists())
+            finally:
+                if worker.is_alive():
+                    worker.terminate()
+                    worker.join()
+
     def test_detects_corrupt_files(self):
         with tempfile.TemporaryDirectory() as temporary:
             browser = Path(temporary)

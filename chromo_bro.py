@@ -138,7 +138,7 @@ def load_config(path):
 
 
 @contextlib.contextmanager
-def exclusive_lock(path):
+def exclusive_lock(path, wait_seconds=0):
     import msvcrt
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -148,10 +148,15 @@ def exclusive_lock(path):
             handle.write(b"0")
             handle.flush()
         handle.seek(0)
-        try:
-            msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
-        except OSError as exc:
-            raise OperationInProgress("Another operation holds " + str(path)) from exc
+        deadline = time.monotonic() + wait_seconds
+        while True:
+            try:
+                msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+                break
+            except OSError as exc:
+                if time.monotonic() >= deadline:
+                    raise OperationInProgress("Another operation holds " + str(path)) from exc
+                time.sleep(0.1)
         try:
             yield
         finally:
@@ -467,13 +472,18 @@ def update(config):
 def launch(config, urls):
     try:
         install_pending(config)
+    except OperationInProgress:
+        LOG.info("An installation is active; waiting before starting the browser")
     except Exception:
         LOG.exception("Could not apply pending update; launching current browser")
-    binary = config["install_root"] / "bin/chrome.exe"
-    if not binary.is_file():
-        raise RuntimeError("No installed browser at " + str(binary))
-    subprocess.Popen([str(binary), "--user-data-dir=" + str(config["install_root"] / "profile"),
-                      "--no-default-browser-check"] + urls, cwd=binary.parent)
+    # Installation and process creation must share a lock. A launcher cannot
+    # start the old browser between the installer's final process check and swap.
+    with exclusive_lock(config["build_root"] / "locks/install.lock", wait_seconds=300):
+        binary = config["install_root"] / "bin/chrome.exe"
+        if not binary.is_file():
+            raise RuntimeError("No installed browser at " + str(binary))
+        subprocess.Popen([str(binary), "--user-data-dir=" + str(config["install_root"] / "profile"),
+                          "--no-default-browser-check"] + urls, cwd=binary.parent)
 
 
 def main():
