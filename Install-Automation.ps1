@@ -14,7 +14,7 @@ $Principal = New-ScheduledTaskPrincipal -UserId $Account -LogonType Interactive 
 $Settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -RunOnlyIfNetworkAvailable `
     -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -MultipleInstances IgnoreNew `
     -ExecutionTimeLimit (New-TimeSpan -Days 3)
-$BuildAction = New-ScheduledTaskAction -Execute $Python `
+$BuildAction = New-ScheduledTaskAction -Execute $PythonWindowless `
     -Argument ('"{0}" update --config "{1}"' -f $Script, $Config) -WorkingDirectory $PSScriptRoot
 $BuildTrigger = New-ScheduledTaskTrigger -Daily -At '04:00'
 $LogonTrigger = New-ScheduledTaskTrigger -AtLogOn -User $Account

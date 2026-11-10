@@ -7,8 +7,12 @@ Chromium distribution.
 
 ## Update process
 
-1. Read Google's [Windows Stable release feed](https://chromiumdash.appspot.com/fetch_releases?channel=Stable&platform=Windows&num=10).
-2. Pin the exact Chromium commit from that release and its dependency revisions.
+1. Read Google's [VersionHistory API](https://developer.chrome.com/docs/web-platform/versionhistory/guide)
+   and select the newest active, pinnable Windows x64 Stable release. Limited
+   early-Stable experiments are excluded.
+2. Match it to the [Windows Stable source feed](https://chromiumdash.appspot.com/fetch_releases?channel=Stable&platform=Windows&num=100)
+   and pin its exact Chromium commit and dependency revisions. Mismatched feeds
+   fail instead of building an unrelated source revision.
 3. Build an optimized, unbranded `mini_installer` with the committed `args.gn`.
 4. Extract the portable browser, smoke-test it with a disposable profile, verify
    its version, and record SHA-256 hashes of the archive and packaged files.
@@ -69,7 +73,9 @@ This creates two current-user, limited-privilege Windows tasks:
   deferring whenever this Chromium is running.
 
 Tasks run while the account is logged in, store no password, and do not wake the
-PC. The **Chromium (chromo-bro)** desktop launcher also applies a pending build
+PC. While a build is active, automatic system sleep is temporarily inhibited;
+the display can still turn off and the normal idle policy resumes afterward.
+The **Chromium (chromo-bro)** desktop launcher also applies a pending build
 before opening the browser. On the first self-build installation, any existing
 chrlauncher update checks are disabled so Hibbiki cannot overwrite this build.
 

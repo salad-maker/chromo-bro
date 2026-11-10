@@ -13,16 +13,30 @@ class ReleaseTests(unittest.TestCase):
         return {"version": version, "channel": channel, "platform": platform,
                 "hashes": {"chromium": "a" * 40}}
 
-    def test_selects_newest_windows_stable_numerically(self):
+    def test_matches_selected_version_to_windows_stable_source_commit(self):
         releases = [self.release("157.0.8103.9"), self.release("157.0.8103.51"),
                     self.release("159.0.1.1", "Dev"), self.release("158.0.1.1", platform="Linux")]
-        self.assertEqual(app.select_release(releases)["version"], "157.0.8103.51")
+        self.assertEqual(app.select_release(releases, "157.0.8103.51")["version"], "157.0.8103.51")
+
+    def test_excludes_limited_early_stable_even_with_higher_major_version(self):
+        releases = [{"version": "158.0.8127.18", "fraction": 0.005, "pinnable": False},
+                    {"version": "157.0.8103.51", "fraction": 1, "pinnable": True},
+                    {"version": "157.0.8103.39", "fraction": 0.495, "pinnable": False}]
+        self.assertEqual(app.select_stable_version(releases), "157.0.8103.51")
+
+    def test_missing_regular_stable_release_fails_without_guessing(self):
+        with self.assertRaises(RuntimeError):
+            app.select_stable_version([{"version": "158.0.8127.18", "fraction": 0.005, "pinnable": False}])
+
+    def test_mismatched_feeds_fail_without_building_an_unrelated_commit(self):
+        with self.assertRaises(RuntimeError):
+            app.select_release([self.release("158.0.8127.18")], "157.0.8103.51")
 
     def test_rejects_invalid_source_commit(self):
         release = self.release("157.0.8103.51")
         release["hashes"]["chromium"] = "refs/heads/main"
         with self.assertRaises(ValueError):
-            app.select_release([release])
+            app.select_release([release], "157.0.8103.51")
 
     def test_rejects_shell_metacharacters_in_version(self):
         with self.assertRaises(ValueError):

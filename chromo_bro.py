@@ -17,17 +17,21 @@ import subprocess
 import sys
 import tempfile
 import time
+import urllib.parse
 import urllib.request
 import uuid
 
 REPO = Path(__file__).resolve().parent
 RELEASE_URL = ("https://chromiumdash.appspot.com/fetch_releases?"
-               "channel=Stable&platform=Windows&num=10")
+               "channel=Stable&platform=Windows&num=100")
+VERSION_HISTORY_URL = ("https://versionhistory.googleapis.com/v1/chrome/platforms/win64/"
+                       "channels/stable/versions/all/releases?filter=endtime%3Dnone")
 SOURCE_URL = "https://chromium.googlesource.com/chromium/src.git"
 DEPOT_URL = "https://chromium.googlesource.com/chromium/tools/depot_tools.git"
 VERSION_RE = re.compile(r"^\d+\.\d+\.\d+\.\d+$")
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 LOG = logging.getLogger("chromo-bro")
+HELPER_FLAGS = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
 
 
 def utc_now():
@@ -55,30 +59,61 @@ def version_tuple(value):
     return tuple(int(part) for part in value.split("."))
 
 
-def select_release(releases):
+def select_stable_version(releases):
+    # Early-Stable experiments also have channel=Stable. Google's pinnable
+    # releases identify versions eligible for the regular supported release path.
+    eligible = []
+    for release in releases:
+        if release.get("pinnable") is True and float(release.get("fraction", 0)) > 0:
+            version_tuple(release["version"])
+            eligible.append(release["version"])
+    if not eligible:
+        raise RuntimeError("Google's VersionHistory feed has no eligible Windows x64 Stable release")
+    return max(eligible, key=version_tuple)
+
+
+def select_release(releases, desired_version):
+    version_tuple(desired_version)
     candidates = []
     for release in releases:
         if release.get("channel") != "Stable" or release.get("platform") != "Windows":
+            continue
+        if release.get("version") != desired_version:
             continue
         version_tuple(release["version"])
         if not SHA_RE.fullmatch(release.get("hashes", {}).get("chromium", "")):
             raise ValueError("Release feed did not provide a valid Chromium commit")
         candidates.append(release)
     if not candidates:
-        raise RuntimeError("No Windows Stable release in Google's release feed")
-    return max(candidates, key=lambda item: version_tuple(item["version"]))
+        raise RuntimeError("No Chromium source commit found for Stable " + desired_version)
+    return candidates[0]
 
 
-def latest_release():
-    request = urllib.request.Request(RELEASE_URL, headers={"User-Agent": "chromo-bro/1"})
+def fetch_json(url):
+    request = urllib.request.Request(url, headers={"User-Agent": "chromo-bro/1"})
     for attempt in range(3):
         try:
             with urllib.request.urlopen(request, timeout=60) as response:
-                return select_release(json.load(response))
+                return json.load(response)
         except (OSError, ValueError):
             if attempt == 2:
                 raise
             time.sleep(2 ** attempt)
+
+
+def latest_release():
+    history = fetch_json(VERSION_HISTORY_URL)
+    releases = history.get("releases", [])
+    for _ in range(10):
+        token = history.get("nextPageToken")
+        if not token:
+            break
+        history = fetch_json(VERSION_HISTORY_URL + "&pageToken=" + urllib.parse.quote(token, safe=""))
+        releases.extend(history.get("releases", []))
+    else:
+        raise RuntimeError("Unexpectedly large active-release feed")
+    desired_version = select_stable_version(releases)
+    return select_release(fetch_json(RELEASE_URL), desired_version)
 
 
 def load_config(path):
@@ -127,10 +162,11 @@ def run(args, cwd=None, env=None, capture=False, timeout=None):
         args = [os.environ.get("COMSPEC", "cmd.exe"), "/d", "/c"] + args
     if capture:
         return subprocess.check_output(args, cwd=cwd, env=env, text=True,
-                                       encoding="utf-8", errors="replace", timeout=timeout).strip()
+                                       encoding="utf-8", errors="replace", timeout=timeout,
+                                       creationflags=HELPER_FLAGS).strip()
     with subprocess.Popen(args, cwd=cwd, env=env, stdout=subprocess.PIPE,
                           stderr=subprocess.STDOUT, text=True,
-                          encoding="utf-8", errors="replace") as process:
+                          encoding="utf-8", errors="replace", creationflags=HELPER_FLAGS) as process:
         for line in process.stdout:
             LOG.info(line.rstrip())
         code = process.wait()
@@ -164,6 +200,22 @@ def build_environment(config):
     env["GIT_CONFIG_COUNT"] = str(count + 2)
     env["GIT_TERMINAL_PROMPT"] = "0"
     return env
+
+
+@contextlib.contextmanager
+def stay_awake():
+    """Prevent automatic system sleep only while this build process is active."""
+    import ctypes
+    if os.name != "nt":
+        yield
+        return
+    kernel = ctypes.windll.kernel32
+    requested = kernel.SetThreadExecutionState(0x80000001)  # CONTINUOUS | SYSTEM_REQUIRED
+    try:
+        yield
+    finally:
+        if requested:
+            kernel.SetThreadExecutionState(0x80000000)  # Restore the normal idle policy.
 
 
 def sha256(path):
@@ -209,7 +261,8 @@ def smoke_test(browser, version):
              "--no-first-run", "--no-default-browser-check", "--disable-extensions",
              "--disable-background-networking", "--user-data-dir=" + temporary,
              "--dump-dom", "data:text/html,<title>chromo-bro-smoke</title><p>ok</p>"],
-            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120,
+            creationflags=HELPER_FLAGS)
         if completed.returncode or "chromo-bro-smoke" not in completed.stdout:
             raise RuntimeError("Browser smoke test failed: " + completed.stderr[-3000:])
         last_version = Path(temporary) / "Last Version"
@@ -399,7 +452,8 @@ def update(config):
             LOG.info("Already running the latest Stable source version: %s", installed["version"])
             return
         if pending.get("version") != version:
-            build(config, release)
+            with stay_awake():
+                build(config, release)
         install_pending(config)
 
 
