@@ -285,6 +285,16 @@ def status(config, phase, **details):
     LOG.info("Status: %s", phase)
 
 
+def compiler_worker_running(output_directory):
+    directory = str(Path(output_directory).resolve()).replace("'", "''")
+    script = ("$directory='" + directory + "'; @(Get-CimInstance Win32_Process "
+              "-Filter \"name='siso.exe'\" -ErrorAction Stop | Where-Object { "
+              "$_.CommandLine -and $_.CommandLine.IndexOf($directory, "
+              "[StringComparison]::OrdinalIgnoreCase) -ge 0 }).Count")
+    return int(run(["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script],
+                   capture=True, timeout=30)) > 0
+
+
 def build(config, release):
     root = config["build_root"]
     version = release["version"]
@@ -293,6 +303,8 @@ def build(config, release):
     source = root / "checkout/src"
     depot = root / "depot_tools"
     out = source / "out/ChromoBro"
+    if compiler_worker_running(out):
+        raise OperationInProgress("A compiler worker is still using " + str(out))
     root.mkdir(parents=True, exist_ok=True)
     free_gb = shutil.disk_usage(root).free / (1024 ** 3)
     if free_gb < config["minimum_free_gb"]:

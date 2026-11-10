@@ -84,6 +84,17 @@ state is in `status.json`, `pending.json`, and `chromo-bro-installed.json`.
 Each verified build has a `manifest.json` recording its exact upstream commit,
 GN arguments, archive hash, and all packaged file hashes.
 
+Stop a currently running compile while retaining its cached outputs:
+
+```powershell
+.\Stop-Build.ps1 -Config .\local.json
+```
+
+The daily schedule remains enabled. Resume immediately with
+`Start-ScheduledTask 'ChromoBro Stable Build'`. The updater also checks for a
+compiler left running after its parent task exits, and will not change the source
+checkout underneath it.
+
 Remove the tasks without uninstalling the browser:
 
 ```powershell

@@ -53,6 +53,20 @@ class ReleaseTests(unittest.TestCase):
 
 
 class PackageTests(unittest.TestCase):
+    def test_does_not_sync_source_while_orphaned_compiler_uses_it(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "checkout/src"
+            source.mkdir(parents=True)
+            marker = source / "existing-source.txt"
+            marker.write_text("source used by the existing compiler")
+            config = {"build_root": root}
+            release = {"version": "157.0.8103.51", "hashes": {"chromium": "a" * 40}}
+            with patch.object(app, "compiler_worker_running", return_value=True):
+                with self.assertRaises(app.OperationInProgress):
+                    app.build(config, release)
+            self.assertEqual(marker.read_text(), "source used by the existing compiler")
+
     def test_launcher_waits_for_installer_before_creating_browser_process(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
