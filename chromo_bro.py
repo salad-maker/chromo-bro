@@ -326,8 +326,21 @@ def install_pending(config):
         if manifest["version"] != pending["version"] or manifest["source_commit"] != pending["source_commit"]:
             raise RuntimeError("Pending build metadata mismatch")
         installed = read_json(install / "chromo-bro-installed.json", {})
-        if installed.get("version") and version_tuple(pending["version"]) <= version_tuple(installed["version"]):
-            raise RuntimeError("Refusing to install an older or equal browser version")
+        if installed.get("version"):
+            comparison = (version_tuple(pending["version"]), version_tuple(installed["version"]))
+            if comparison[0] == comparison[1] and installed.get("manifest_sha256") == pending["manifest_sha256"]:
+                # Recover if power was lost after recording the installation but
+                # before removing the pending marker.
+                verify_manifest(install / "bin", manifest["files"])
+                (root / "pending.json").unlink()
+                return False
+            if comparison[0] <= comparison[1]:
+                raise RuntimeError("Refusing to install an older or equal browser version")
+        profile_version = install / "profile/Last Version"
+        if profile_version.exists():
+            last_version = profile_version.read_text(encoding="utf-8").strip()
+            if VERSION_RE.fullmatch(last_version) and version_tuple(pending["version"]) < version_tuple(last_version):
+                raise RuntimeError("Refusing to downgrade a profile opened by a newer Chromium")
         verify_manifest(build_dir / "browser", manifest["files"])
         install.mkdir(parents=True, exist_ok=True)
         stage = install / ("bin-next-" + uuid.uuid4().hex)

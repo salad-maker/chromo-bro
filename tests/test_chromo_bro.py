@@ -122,6 +122,27 @@ class PackageTests(unittest.TestCase):
             self.assertEqual((config["install_root"] / "bin/chrome.exe").read_bytes(), b"previous")
             self.assertTrue((root / "pending.json").exists())
 
+    def test_does_not_downgrade_profile_from_newer_browser(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            config = self.prepare_install(root)
+            (config["install_root"] / "profile/Last Version").write_text("158.0.8127.19")
+            with patch.object(app, "browser_running", return_value=False):
+                with self.assertRaisesRegex(RuntimeError, "downgrade"):
+                    app.install_pending(config)
+            self.assertEqual((config["install_root"] / "bin/chrome.exe").read_bytes(), b"previous")
+
+    def test_recovers_pending_marker_after_successful_install_interruption(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            config = self.prepare_install(root)
+            pending = app.read_json(root / "pending.json")
+            with patch.object(app, "browser_running", return_value=False), patch.object(app, "smoke_test"):
+                app.install_pending(config)
+                app.write_json(root / "pending.json", pending)
+                self.assertFalse(app.install_pending(config))
+            self.assertFalse((root / "pending.json").exists())
+
 
 if __name__ == "__main__":
     unittest.main()
