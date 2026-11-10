@@ -27,6 +27,8 @@ Failed builds or verification leave the current browser in place. The installer
 never terminates the user's browser. A binary rollback must use its matching
 profile backup because newer versions can migrate profile data. Build artifacts
 and backups are retained; review their disk usage periodically.
+Installation checks space for the staged browser, the profile backup, and a
+2 GB reserve on the browser drive before copying any files.
 
 ## Requirements
 
@@ -76,7 +78,7 @@ This creates two current-user, limited-privilege Windows tasks:
   deferring whenever this Chromium is running.
 
 Tasks run while the account is logged in, store no password, and do not wake the
-PC. While a build is active, automatic system sleep is temporarily inhibited;
+PC. While a build or installation is active, automatic system sleep is temporarily inhibited;
 the display can still turn off and the normal idle policy resumes afterward.
 The **Chromium (chromo-bro)** desktop launcher also applies a pending build
 before opening the browser. On the first self-build installation, any existing
@@ -86,6 +88,8 @@ Build output and errors go to `<build_root>\logs\update.log`. Machine-readable
 state is in `status.json`, `pending.json`, and `chromo-bro-installed.json`.
 Each verified build has a `manifest.json` recording its exact upstream commit,
 GN arguments, archive hash, and all packaged file hashes.
+Published records in `build-records/` capture verified versions, source commits,
+build arguments, and archive/binary hashes.
 
 Stop a currently running compile while retaining its cached outputs:
 

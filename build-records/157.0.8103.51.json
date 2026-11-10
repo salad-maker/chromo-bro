@@ -1,0 +1,23 @@
+{
+  "version": "157.0.8103.51",
+  "source_commit": "653674df293788cf4932c40d914e9e15b41a2d31",
+  "source_url": "https://chromium.googlesource.com/chromium/src.git",
+  "built_at": "2026-11-10T22:35:50.595676+00:00",
+  "build_args": "# Optimized, unbranded Chromium. No Google credentials are embedded.\nis_debug = false\nis_official_build = false\nis_component_build = false\ntarget_cpu = \"x64\"\nsymbol_level = 0\nblink_symbol_level = 0\nv8_symbol_level = 0\nchrome_pgo_phase = 0\nproprietary_codecs = true\nffmpeg_branding = \"Chrome\"\nuse_remoteexec = false\n",
+  "archive_sha256": "99808a36b8cc77622ca22a8ca9d82464d4cf5909b99db13b5ff2089c20e476af",
+  "manifest_sha256": "4cbe0e8f7d3527fee347916e0007e61ac1d8d675cdf01eee1318dc5495229fca",
+  "binary_sha256": {
+    "chrome.exe": "9340e154ae15a72003b7b07b71698ee70c282c6f1722b21cbc4e47c1edd9997b",
+    "157.0.8103.51/chrome.dll": "e54b1b6ef8da5635675dabc5be3ed056c850a871b266e728bd3637af9f3be1e6"
+  },
+  "verification": {
+    "sandbox": "enabled",
+    "package_headless_smoke": "passed",
+    "staged_headless_smoke": "passed",
+    "installed_file_hashes": "passed",
+    "verified_files": 254,
+    "desktop_launcher_with_existing_profile": "passed",
+    "automated_tests_passed": 22
+  },
+  "verified_at": "2026-11-10T23:02:51.563011+00:00"
+}

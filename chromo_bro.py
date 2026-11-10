@@ -213,18 +213,20 @@ def build_environment(config):
 
 @contextlib.contextmanager
 def stay_awake():
-    """Prevent automatic system sleep only while this build process is active."""
+    """Prevent automatic system sleep only while this operation is active."""
     import ctypes
     if os.name != "nt":
         yield
         return
-    kernel = ctypes.windll.kernel32
-    requested = kernel.SetThreadExecutionState(0x80000001)  # CONTINUOUS | SYSTEM_REQUIRED
+    set_state = ctypes.windll.kernel32.SetThreadExecutionState
+    set_state.argtypes = [ctypes.c_uint]
+    set_state.restype = ctypes.c_uint
+    previous = set_state(0x80000001)  # CONTINUOUS | SYSTEM_REQUIRED
     try:
         yield
     finally:
-        if requested:
-            kernel.SetThreadExecutionState(0x80000000)  # Restore the normal idle policy.
+        if previous:
+            set_state(previous)  # Preserve an enclosing operation's sleep request.
 
 
 def sha256(path):
@@ -399,13 +401,14 @@ def browser_running(config):
 def install_pending(config):
     root = config["build_root"]
     install = config["install_root"]
-    with exclusive_lock(root / "locks/install.lock"):
+    with exclusive_lock(root / "locks/install.lock"), contextlib.ExitStack() as operation:
         pending = read_json(root / "pending.json")
         if not pending:
             return False
         if browser_running(config):
             LOG.info("Browser is running; leaving the verified update pending")
             return False
+        operation.enter_context(stay_awake())
         build_dir = Path(pending["build_dir"]).resolve()
         builds = (root / "builds").resolve()
         if builds not in build_dir.parents:
@@ -434,6 +437,15 @@ def install_pending(config):
                 raise RuntimeError("Refusing to downgrade a profile opened by a newer Chromium")
         verify_manifest(build_dir / "browser", manifest["files"])
         install.mkdir(parents=True, exist_ok=True)
+        # Keep space for the staged browser, a complete profile backup, and the
+        # operating system. Refuse before copying rather than filling C:.
+        required = 2 * 1024 ** 3
+        for directory in (build_dir / "browser", install / "profile"):
+            if directory.exists():
+                required += sum(path.stat().st_size for path in directory.rglob("*") if path.is_file())
+        if shutil.disk_usage(install).free < required:
+            raise RuntimeError("Browser drive needs %.1f GB free for staging, profile backup, and a 2 GB reserve" %
+                               (required / 1024 ** 3))
         stage = install / ("bin-next-" + uuid.uuid4().hex)
         shutil.copytree(build_dir / "browser", stage)
         verify_manifest(stage, manifest["files"])
@@ -481,7 +493,7 @@ def install_pending(config):
 
 def update(config):
     root = config["build_root"]
-    with exclusive_lock(root / "locks/build.lock"):
+    with exclusive_lock(root / "locks/build.lock"), stay_awake():
         release = latest_release()
         version = release["version"]
         pending = read_json(root / "pending.json", {})
@@ -490,8 +502,7 @@ def update(config):
             LOG.info("Already running the latest Stable source version: %s", installed["version"])
             return
         if pending.get("version") != version:
-            with stay_awake():
-                build(config, release)
+            build(config, release)
         install_pending(config)
 
 

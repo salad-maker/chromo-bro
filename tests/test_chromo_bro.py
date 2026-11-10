@@ -1,4 +1,5 @@
 from pathlib import Path
+import contextlib
 import multiprocessing
 import os
 import sys
@@ -54,6 +55,28 @@ class ReleaseTests(unittest.TestCase):
 
 
 class PackageTests(unittest.TestCase):
+    @unittest.skipUnless(os.name == "nt", "Windows sleep inhibition")
+    def test_nested_sleep_requests_restore_the_enclosing_request(self):
+        state = [0x80000000]
+        def set_state(value):
+            previous = state[0]
+            state[0] = value
+            return previous
+        with patch("ctypes.windll.kernel32.SetThreadExecutionState", side_effect=set_state):
+            with app.stay_awake():
+                self.assertEqual(state[0], 0x80000001)
+                with app.stay_awake():
+                    self.assertEqual(state[0], 0x80000001)
+                self.assertEqual(state[0], 0x80000001)
+            self.assertEqual(state[0], 0x80000000)
+
+    def test_no_pending_install_does_not_inhibit_sleep(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            with patch.object(app, "stay_awake") as awake:
+                self.assertFalse(app.install_pending({"build_root": root, "install_root": root / "installed"}))
+            awake.assert_not_called()
+
     @unittest.skipUnless(os.name == "nt", "Windows package permissions")
     def test_sandbox_permissions_cover_nested_files_without_changing_siblings(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -206,6 +229,32 @@ class PackageTests(unittest.TestCase):
             self.assertEqual((backup / "bin/chrome.exe").read_bytes(), b"previous")
             self.assertFalse((root / "pending.json").exists())
 
+    def test_install_keeps_pc_awake_through_copy_backup_and_switch(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            config = self.prepare_install(root)
+            active = [False]
+            @contextlib.contextmanager
+            def awake():
+                active[0] = True
+                try:
+                    yield
+                finally:
+                    active[0] = False
+            original_copy = app.shutil.copytree
+            original_rename = Path.rename
+            def copy(*args, **kwargs):
+                self.assertTrue(active[0])
+                return original_copy(*args, **kwargs)
+            def rename(path, target):
+                self.assertTrue(active[0])
+                return original_rename(path, target)
+            with patch.object(app, "stay_awake", awake), patch.object(app, "browser_running", return_value=False), \
+                    patch.object(app, "smoke_test"), patch.object(app.shutil, "copytree", copy), \
+                    patch.object(Path, "rename", rename):
+                self.assertTrue(app.install_pending(config))
+            self.assertFalse(active[0])
+
     def test_permission_failure_preserves_existing_browser_and_profile(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -218,6 +267,21 @@ class PackageTests(unittest.TestCase):
             self.assertEqual((config["install_root"] / "profile/keep.txt").read_text(), "my profile")
             self.assertTrue((root / "pending.json").exists())
             self.assertFalse((config["install_root"] / "chromo-bro-installed.json").exists())
+
+    def test_insufficient_install_space_fails_before_staging_or_profile_backup(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            config = self.prepare_install(root)
+            usage = app.shutil.disk_usage(root)._replace(free=0)
+            with patch.object(app, "browser_running", return_value=False), \
+                    patch.object(app.shutil, "disk_usage", return_value=usage):
+                with self.assertRaisesRegex(RuntimeError, "2 GB reserve"):
+                    app.install_pending(config)
+            self.assertEqual((config["install_root"] / "bin/chrome.exe").read_bytes(), b"previous")
+            self.assertEqual((config["install_root"] / "profile/keep.txt").read_text(), "my profile")
+            self.assertFalse(list(config["install_root"].glob("bin-next-*")))
+            self.assertFalse((config["install_root"] / "backups").exists())
+            self.assertTrue((root / "pending.json").exists())
 
     def test_restores_previous_browser_if_directory_switch_fails(self):
         with tempfile.TemporaryDirectory() as temporary:
