@@ -16,6 +16,9 @@ Chromium distribution.
 3. Build an optimized, unbranded `mini_installer` with the committed `args.gn`.
 4. Extract the portable browser, smoke-test it with a disposable profile, verify
    its version, and record SHA-256 hashes of the archive and packaged files.
+   Before each smoke test, grant Windows AppContainer sandboxes read/execute
+   access to that browser package, including on external build drives. The
+   sandbox remains enabled; profile and source permissions are not changed.
 5. Wait until this Chromium installation is closed. Back up the existing browser
    and profile, verify the staged files again, and switch the `bin` directory.
 6. Launch using the existing `profile` directory.
@@ -110,7 +113,10 @@ python -m unittest discover -s tests -v
 
 Tests cover release selection, invalid feed values, file tampering, directory
 traversal, waiting for a running browser, profile preservation, and restoring
-the old browser after a failed directory switch. Actual packages additionally
+the old browser after a failed directory switch. Windows tests also verify
+AppContainer read/execute permissions on nested package files, unchanged sibling
+permissions, and preservation of the current browser when ACL preparation fails.
+Actual packages additionally
 receive headless smoke tests before acceptance and again before installation.
 
 ## Scope

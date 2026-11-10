@@ -262,7 +262,21 @@ def verify_manifest(browser, files):
             raise RuntimeError("Browser integrity check failed: " + relative)
 
 
+def prepare_browser_permissions(browser):
+    """Give Windows AppContainer sandboxes read/execute access to this package."""
+    browser = Path(browser).resolve()
+    if not (browser / "chrome.exe").is_file():
+        raise RuntimeError("Cannot prepare permissions without a browser executable")
+    if os.name == "nt":
+        # Portable archives inherit their destination's ACL. External build
+        # drives can lack both normal and restricted AppContainer access.
+        # Grant only RX on this browser tree, never on profiles or source.
+        run(["icacls.exe", browser, "/grant", "*S-1-15-2-1:(OI)(CI)(RX)",
+             "*S-1-15-2-2:(OI)(CI)(RX)", "/T", "/Q"], capture=True, timeout=120)
+
+
 def smoke_test(browser, version):
+    prepare_browser_permissions(browser)
     # Never run experimental builds against the real user profile.
     with tempfile.TemporaryDirectory(prefix="chromo-bro-smoke-") as temporary:
         completed = subprocess.run(

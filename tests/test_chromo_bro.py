@@ -1,5 +1,6 @@
 from pathlib import Path
 import multiprocessing
+import os
 import sys
 import tempfile
 import time
@@ -53,6 +54,42 @@ class ReleaseTests(unittest.TestCase):
 
 
 class PackageTests(unittest.TestCase):
+    @unittest.skipUnless(os.name == "nt", "Windows package permissions")
+    def test_sandbox_permissions_cover_nested_files_without_changing_siblings(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            browser = root / "browser"
+            (browser / "nested").mkdir(parents=True)
+            (browser / "chrome.exe").write_bytes(b"browser")
+            resource = browser / "nested/resource.pak"
+            resource.write_bytes(b"resource")
+            private = root / "private.txt"
+            private.write_text("outside the browser package")
+            def powershell(script):
+                return app.run(["powershell.exe", "-NoProfile", "-NonInteractive",
+                                "-Command", script], capture=True, timeout=30)
+            private_literal = str(private).replace("'", "''")
+            sibling_acl = ("([IO.File]::GetAccessControl('" + private_literal + "'))"
+                           ".GetSecurityDescriptorSddlForm([Security.AccessControl.AccessControlSections]::Access)")
+            before = powershell(sibling_acl)
+            app.prepare_browser_permissions(browser)
+            paths = ",".join("'" + str(path).replace("'", "''") + "'"
+                             for path in (browser / "chrome.exe", resource))
+            script = ("$ErrorActionPreference='Stop'; "
+                      "$rx=[int][Security.AccessControl.FileSystemRights]::ReadAndExecute; "
+                      "$write=[int][Security.AccessControl.FileSystemRights]::Write; "
+                      "foreach ($path in @(" + paths + ")) { "
+                      "foreach ($sid in @('S-1-15-2-1','S-1-15-2-2')) { "
+                      "$rights=0; $security=[IO.File]::GetAccessControl($path); "
+                      "foreach ($ace in $security.GetAccessRules($true,$true,[Security.Principal.SecurityIdentifier])) { "
+                      "if ($ace.IdentityReference.Value "
+                      "-eq $sid -and $ace.AccessControlType -eq 'Allow') { "
+                      "$rights=$rights -bor [int]$ace.FileSystemRights } }; "
+                      "if (($rights -band $rx) -ne $rx -or ($rights -band $write) -ne 0) { "
+                      "throw 'AppContainer must receive read/execute without write access' } } }; "
+                      + sibling_acl)
+            self.assertEqual(powershell(script), before)
+
     def test_does_not_sync_source_while_orphaned_compiler_uses_it(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -168,6 +205,19 @@ class PackageTests(unittest.TestCase):
             self.assertEqual((backup / "profile/keep.txt").read_text(), "my profile")
             self.assertEqual((backup / "bin/chrome.exe").read_bytes(), b"previous")
             self.assertFalse((root / "pending.json").exists())
+
+    def test_permission_failure_preserves_existing_browser_and_profile(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            config = self.prepare_install(root)
+            with patch.object(app, "browser_running", return_value=False), \
+                    patch.object(app, "prepare_browser_permissions", side_effect=PermissionError("ACL rejected")):
+                with self.assertRaises(PermissionError):
+                    app.install_pending(config)
+            self.assertEqual((config["install_root"] / "bin/chrome.exe").read_bytes(), b"previous")
+            self.assertEqual((config["install_root"] / "profile/keep.txt").read_text(), "my profile")
+            self.assertTrue((root / "pending.json").exists())
+            self.assertFalse((config["install_root"] / "chromo-bro-installed.json").exists())
 
     def test_restores_previous_browser_if_directory_switch_fails(self):
         with tempfile.TemporaryDirectory() as temporary:
