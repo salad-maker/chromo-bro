@@ -298,6 +298,9 @@ def build(config, release):
     env = build_environment(config)
     if not depot.exists():
         run([config.get("git", "git"), "clone", DEPOT_URL, depot], env=env)
+    if not (depot / "python3_bin_reldir.txt").is_file():
+        status(config, "bootstrapping-tools", version=version, source_commit=commit)
+        run([depot / "bootstrap/win_tools.bat"], cwd=depot, env=env)
     checkout = source.parent
     checkout.mkdir(parents=True, exist_ok=True)
     client = checkout / ".gclient"
