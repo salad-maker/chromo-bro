@@ -1,0 +1,12 @@
+# Optimized, unbranded Chromium. No Google credentials are embedded.
+is_debug = false
+is_official_build = false
+is_component_build = false
+target_cpu = "x64"
+symbol_level = 0
+blink_symbol_level = 0
+v8_symbol_level = 0
+chrome_pgo_phase = 0
+proprietary_codecs = true
+ffmpeg_branding = "Chrome"
+use_remoteexec = false

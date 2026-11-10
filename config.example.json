@@ -1,0 +1,10 @@
+{
+  "build_root": "F:\\chromium-build",
+  "install_root": "C:\\chromium",
+  "visual_studio": "F:\\chromium-build\\vs2026",
+  "seven_zip": "C:\\Program Files\\7-Zip\\7z.exe",
+  "git": "F:\\chromium-build\\git\\cmd\\git.exe",
+  "jobs": 3,
+  "sync_jobs": 2,
+  "minimum_free_gb": 100
+}
