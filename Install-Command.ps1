@@ -5,9 +5,6 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 $Config = (Resolve-Path -LiteralPath $Config).Path
-$Python = (Resolve-Path -LiteralPath $Python).Path
-$PythonWindowless = Join-Path (Split-Path -Parent $Python) 'pythonw.exe'
-if (-not (Test-Path -LiteralPath $PythonWindowless)) { throw 'pythonw.exe is required' }
 $Script = Join-Path $PSScriptRoot 'chromo_bro.py'
 $LocalConfig = Get-Content -LiteralPath $Config -Raw | ConvertFrom-Json
 $CommandDirectory = Join-Path ([IO.Path]::GetFullPath($LocalConfig.install_root)) 'commands'
@@ -16,11 +13,20 @@ $CommandPath = Join-Path $CommandDirectory 'chromo.cmd'
 if ((Test-Path -LiteralPath $CommandPath) -and (Get-Content -LiteralPath $CommandPath -Raw) -notmatch 'rem Managed by chromo-bro') {
     throw 'An unrelated chromo.cmd already exists; leaving it in place'
 }
+$PortableClient=Join-Path $LocalConfig.install_root 'runtime\chromo_client.py'
+if (Test-Path -LiteralPath $PortableClient) {
+    $LaunchLine='"%~dp0..\runtime\python\python.exe" "%~dp0..\runtime\chromo_client.py" --root "%~dp0.." %*'
+} else {
+    $Python=(Resolve-Path -LiteralPath $Python).Path
+    $PythonWindowless=Join-Path (Split-Path -Parent $Python) 'pythonw.exe'
+    if (-not (Test-Path -LiteralPath $PythonWindowless)) { throw 'pythonw.exe is required' }
+    $LaunchLine='start "" "{0}" "{1}" --config "{2}" launch %*' -f $PythonWindowless.Replace('%','%%'),$Script.Replace('%','%%'),$Config.Replace('%','%%')
+}
 $Command = @(
     '@echo off'
     'rem Managed by chromo-bro'
     'setlocal DisableDelayedExpansion'
-    ('start "" "{0}" "{1}" --config "{2}" launch %*' -f $PythonWindowless.Replace('%','%%'), $Script.Replace('%','%%'), $Config.Replace('%','%%'))
+    $LaunchLine
 ) -join "`r`n"
 [IO.File]::WriteAllText($CommandPath, $Command + "`r`n", [Text.UTF8Encoding]::new($false))
 $UserPath = [Environment]::GetEnvironmentVariable('Path', 'User')

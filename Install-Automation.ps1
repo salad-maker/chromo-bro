@@ -5,6 +5,14 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 $Config = (Resolve-Path -LiteralPath $Config).Path
+$PortableConfig = Get-Content -LiteralPath $Config -Raw | ConvertFrom-Json
+$PortableRoot = [IO.Path]::GetFullPath($PortableConfig.install_root)
+if ((Test-Path -LiteralPath (Join-Path $PortableRoot 'runtime\Setup-Portable.ps1')) -and (Test-Path -LiteralPath (Join-Path $PortableRoot 'Chromo.exe'))) {
+    @{mode='source';repository='salad-maker/chromo-bro';builder_config=$Config;keep_backups=2} | ConvertTo-Json |
+        Set-Content -LiteralPath (Join-Path $PortableRoot 'runtime\client.json') -Encoding UTF8
+    & (Join-Path $PortableRoot 'runtime\Setup-Portable.ps1') -Root $PortableRoot
+    return
+}
 $Python = (Resolve-Path -LiteralPath $Python).Path
 $PythonWindowless = Join-Path (Split-Path -Parent $Python) 'pythonw.exe'
 if (-not (Test-Path -LiteralPath $PythonWindowless)) { throw 'pythonw.exe is required for the desktop launcher' }

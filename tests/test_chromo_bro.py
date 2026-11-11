@@ -137,7 +137,7 @@ class PackageTests(unittest.TestCase):
             worker = multiprocessing.Process(target=launch_with_marker,
                                              args=(config, str(attempted), str(launched)))
             try:
-                with app.exclusive_lock(root / "locks/install.lock"):
+                with app.exclusive_lock(app.install_lock(config)):
                     worker.start()
                     deadline = time.monotonic() + 10
                     while not attempted.exists() and time.monotonic() < deadline:
