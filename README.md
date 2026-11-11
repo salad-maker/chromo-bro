@@ -70,7 +70,12 @@ After verifying the first build:
 .\Install-Automation.ps1 -Config .\local.json -Python C:\Python39\python.exe
 ```
 
-This creates two current-user, limited-privilege Windows tasks:
+This also installs the short `chromo` command on your user PATH. Restart your
+terminal, then run `chromo` or `chromo about:blank`. It uses the existing profile
+and applies a verified pending update before launching when the browser is closed.
+Run `.\Install-Command.ps1` separately to add the command without changing tasks.
+
+The automation installer creates two current-user, limited-privilege Windows tasks:
 
 - **ChromoBro Stable Build:** check/build daily at 04:00 local time and five
   minutes after login, catching up after missed runs and avoiding overlapping runs.

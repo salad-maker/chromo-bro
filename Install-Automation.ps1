@@ -39,6 +39,7 @@ $LocalConfig = Get-Content -LiteralPath $Config -Raw | ConvertFrom-Json
 $Shortcut.IconLocation = (Join-Path $LocalConfig.install_root 'bin\chrome.exe') + ',0'
 $Shortcut.Description = 'Chromium Stable built locally from upstream source; reuses the existing profile.'
 $Shortcut.Save()
+& (Join-Path $PSScriptRoot 'Install-Command.ps1') -Config $Config -Python $Python
 Get-ScheduledTask -TaskName 'ChromoBro Stable Build','ChromoBro Apply Pending Build' |
     Select-Object TaskName, State, Principal
 Write-Output ('Desktop launcher: ' + $LinkPath)
