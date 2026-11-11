@@ -30,10 +30,10 @@ Register-ScheduledTask -TaskName 'ChromoBro Apply Pending Build' -Action $ApplyA
     -Trigger $ApplyTrigger -Settings $Settings -Principal $Principal `
     -Description 'Apply a verified locally built Chromium update only while this Chromium installation is closed.' -Force | Out-Null
 $Shell = New-Object -ComObject WScript.Shell
-$LinkPath = Join-Path ([Environment]::GetFolderPath('Desktop')) 'Chromium (chromo-bro).lnk'
+$LinkPath = Join-Path ([Environment]::GetFolderPath('Desktop')) 'Chromo.lnk'
 $Shortcut = $Shell.CreateShortcut($LinkPath)
 $Shortcut.TargetPath = $PythonWindowless
-$Shortcut.Arguments = '"{0}" launch --config "{1}"' -f $Script, $Config
+$Shortcut.Arguments = '"{0}" --config "{1}" launch' -f $Script, $Config
 $Shortcut.WorkingDirectory = $PSScriptRoot
 $LocalConfig = Get-Content -LiteralPath $Config -Raw | ConvertFrom-Json
 $Shortcut.IconLocation = (Join-Path $LocalConfig.install_root 'bin\chrome.exe') + ',0'

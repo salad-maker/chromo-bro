@@ -85,7 +85,7 @@ The automation installer creates two current-user, limited-privilege Windows tas
 Tasks run while the account is logged in, store no password, and do not wake the
 PC. While a build or installation is active, automatic system sleep is temporarily inhibited;
 the display can still turn off and the normal idle policy resumes afterward.
-The **Chromium (chromo-bro)** desktop launcher also applies a pending build
+The **Chromo** desktop launcher also applies a pending build
 before opening the browser. On the first self-build installation, any existing
 chrlauncher update checks are disabled so Hibbiki cannot overwrite this build.
 
