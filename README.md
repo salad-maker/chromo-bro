@@ -38,6 +38,12 @@ with a profile from a download. Portable release archives contain no user profil
 
 ## Updates and recovery
 
+On Chromo builds with About page support, open **Settings > About Chromium**
+(`chrome://settings/help`) to watch the scheduled updater. The page shows checks,
+build or download progress when available, the up-to-date result, and updates
+that are ready to install. Close Chromium and reopen it through Chromo to apply
+a ready update.
+
 Portable users download **published, verified browser builds** from this repo's
 GitHub Releases. Source builders can continue compiling upstream Stable locally.
 No GitHub credentials are needed to download public releases.

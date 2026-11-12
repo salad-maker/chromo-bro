@@ -280,7 +280,34 @@ def record_check(config, version, source="upstream Stable"):
     write_json(state_root(config) / "last-check.json", {"at": utc_now(), "version": version, "source": source, "success": True})
 
 
+def about_status(config, phase, progress=0):
+    """Publish the small, path-free status read by About Chromium."""
+    value = {"schema": 1, "phase": phase, "progress": progress}
+    if phase in ("checking", "updating"):
+        value["pid"] = os.getpid()
+    try:
+        write_json(state_root(config) / "about-update.json", value)
+    except OSError:
+        LOG.warning("Could not write About Chromium status", exc_info=True)
+
+
+def about_progress(config):
+    last_percent = 0
+
+    def report(completed, total):
+        nonlocal last_percent
+        if total > 0:
+            percent = min(99, completed * 100 // total)
+            if percent > last_percent:
+                last_percent = percent
+                about_status(config, "updating", percent)
+
+    return report
+
+
 def record_failure(config, operation, error):
+    if operation in ("update", "apply", "install-pending"):
+        about_status(config, "failed")
     root = state_root(config)
     previous = read_json(root / "last-error.json", {})
     message = str(error)[-2000:]
@@ -329,7 +356,7 @@ def exclusive_lock(path, wait_seconds=0):
             msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
 
 
-def run(args, cwd=None, env=None, capture=False, timeout=None):
+def run(args, cwd=None, env=None, capture=False, timeout=None, on_line=None):
     args = [str(arg) for arg in args]
     LOG.info("Running %s", subprocess.list2cmdline(args))
     if os.name == "nt" and Path(args[0]).suffix.lower() in (".bat", ".cmd"):
@@ -343,6 +370,8 @@ def run(args, cwd=None, env=None, capture=False, timeout=None):
                           encoding="utf-8", errors="replace", creationflags=HELPER_FLAGS) as process:
         for line in process.stdout:
             LOG.info(line.rstrip())
+            if on_line is not None:
+                on_line(line)
         code = process.wait()
     if code:
         raise subprocess.CalledProcessError(code, args)
@@ -477,6 +506,18 @@ def compiler_worker_running(output_directory):
                    capture=True, timeout=30)) > 0
 
 
+@contextlib.contextmanager
+def patch_about_page(config, source, env):
+    patch = REPO / "patches/about-update.patch"
+    git = [config.get("git", "git"), "-C", source, "apply"]
+    run([*git, "--check", patch], env=env)
+    run([*git, patch], env=env)
+    try:
+        yield
+    finally:
+        run([*git, "--reverse", patch], env=env)
+
+
 def build(config, release):
     root = config["build_root"]
     version = release["version"]
@@ -508,6 +549,14 @@ def build(config, release):
                           '", "managed": False, "custom_deps": {}, '
                           '"custom_vars": {"checkout_pgo_profiles": False}}]\n'
                           'target_os = ["win"]\n', encoding="utf-8")
+    # Recover our exact temporary patch if a previous build was interrupted.
+    patch = REPO / "patches/about-update.patch"
+    git = [str(config.get("git", "git")), "-C", str(source), "apply", "--reverse"]
+    if source.is_dir() and subprocess.run([*git, "--check", str(patch)], env=env,
+                                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                          creationflags=HELPER_FLAGS).returncode == 0:
+        run([*git, patch], env=env)
+    about_status(config, "updating")
     status(config, "syncing", version=version, source_commit=commit)
     run([depot / "gclient.bat", "sync", "--no-history", "--nohooks",
          "--jobs", config["sync_jobs"], "--revision", "src@" + commit], cwd=checkout, env=env)
@@ -519,9 +568,17 @@ def build(config, release):
     out.mkdir(parents=True, exist_ok=True)
     shutil.copy2(REPO / "args.gn", out / "args.gn")
     status(config, "compiling", version=version, source_commit=commit)
-    run([source / "buildtools/win/gn.exe", "gen", out], cwd=source, env=env)
-    run([depot / "autoninja.bat", "-C", out, "-j", config["jobs"], "mini_installer"],
-        cwd=source, env=env)
+    report = about_progress(config)
+
+    def compile_progress(line):
+        match = re.match(r"\s*\[(\d+)/(\d+)\]", line)
+        if match:
+            report(int(match[1]), int(match[2]))
+
+    with patch_about_page(config, source, env):
+        run([source / "buildtools/win/gn.exe", "gen", out], cwd=source, env=env)
+        run([depot / "autoninja.bat", "-C", out, "-j", config["jobs"], "mini_installer"],
+            cwd=source, env=env, on_line=compile_progress)
     package = out / "chrome.7z"
     if not package.is_file():
         raise RuntimeError("Build did not produce chrome.7z")
@@ -547,7 +604,9 @@ def build(config, release):
     write_json(build_dir / "manifest.json", manifest)
     pending = {"build_dir": str(build_dir), "version": version, "source_commit": commit,
                "manifest_sha256": sha256(build_dir / "manifest.json")}
-    write_json(root / "pending.json", pending)
+    with exclusive_lock(install_lock(config), wait_seconds=300):
+        write_json(root / "pending.json", pending)
+        about_status(config, "ready")
     if config.get("package_releases", False):
         try:
             status(config, "packaging-release", version=version, source_commit=commit)
@@ -680,6 +739,9 @@ def install_pending(config):
             committed = True
             (root / "pending.json").unlink()
             status(config, "installed", **installed)
+            last_check = read_json(state_root(config) / "last-check.json", {})
+            if last_check.get("version") and version_tuple(last_check["version"]) <= version_tuple(pending["version"]):
+                about_status(config, "current")
             try:
                 prune_backups(config)
             except Exception as exc:
@@ -717,16 +779,20 @@ def install_pending(config):
 def update(config):
     root = config["build_root"]
     with exclusive_lock(root / "locks/build.lock"), stay_awake():
+        about_status(config, "checking")
         release = latest_release()
         version = release["version"]
         record_check(config, version)
         pending = read_json(root / "pending.json", {})
         installed = read_json(config["install_root"] / "chromo-bro-installed.json", {})
         if installed.get("version") and version_tuple(installed["version"]) >= version_tuple(version):
+            about_status(config, "current")
             LOG.info("Already running the latest Stable source version: %s", installed["version"])
             return
         if pending.get("version") != version:
             build(config, release)
+        else:
+            about_status(config, "ready")
         install_pending(config)
 
 

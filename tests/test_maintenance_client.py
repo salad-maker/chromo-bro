@@ -146,6 +146,20 @@ class MaintenanceTests(unittest.TestCase):
             self.assertTrue((root / "pending.json").exists())
             self.assertFalse(list(config["install_root"].glob("bin-next-*")))
 
+    def test_about_progress_tracks_real_work_without_claiming_completion(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            config = {"install_root": Path(temporary)}
+            snapshot = core.state_root(config) / "about-update.json"
+            report = core.about_progress(config)
+            report(1, 4)
+            self.assertEqual(core.read_json(snapshot), {
+                "schema": 1, "phase": "updating", "progress": 25, "pid": core.os.getpid(),
+            })
+            report(1, 10)
+            self.assertEqual(core.read_json(snapshot)["progress"], 25)
+            report(10, 10)
+            self.assertEqual(core.read_json(snapshot)["progress"], 99)
+
     def test_failure_notifications_are_deduplicated_and_persisted(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

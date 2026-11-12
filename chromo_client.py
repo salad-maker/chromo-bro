@@ -50,7 +50,7 @@ def validate_asset_url(url, repository):
         raise ValueError("Release asset is outside the configured repository")
 
 
-def download(url, destination, digest, maximum=2 * 1024**3):
+def download(url, destination, digest, maximum=2 * 1024**3, on_progress=None):
     if not re.fullmatch(r"[0-9a-f]{64}", digest):
         raise ValueError("Missing SHA-256 download digest")
     destination = Path(destination)
@@ -70,6 +70,8 @@ def download(url, destination, digest, maximum=2 * 1024**3):
                 if size > maximum:
                     raise ValueError("Download exceeds the package size limit")
                 output.write(block)
+                if on_progress is not None:
+                    on_progress(size)
         if core.sha256(temporary) != digest:
             raise RuntimeError("Downloaded package SHA-256 does not match")
         os.replace(temporary, destination)
@@ -167,11 +169,13 @@ def cleanup_downloads(client):
 
 def update_release(client):
     with core.exclusive_lock(core.state_root(client) / "locks/download.lock"), core.stay_awake():
+        core.about_status(client, "checking")
         manifest, asset = latest_published(client)
         version = manifest["version"]
         core.record_check(client, version, "published Chromo release")
         installed = core.read_json(client["install_root"] / "chromo-bro-installed.json", {})
         if installed.get("version") and core.version_tuple(installed["version"]) >= core.version_tuple(version):
+            core.about_status(client, "current")
             return "Already running the latest published browser: " + installed["version"]
         root = client["build_root"]
         with core.exclusive_lock(core.install_lock(client)):
@@ -186,7 +190,10 @@ def update_release(client):
             if shutil.disk_usage(client["install_root"]).free < required:
                 raise RuntimeError("Not enough space to download, stage, and back up the update while keeping a 2 GiB reserve")
             zip_path = root / ("browser-" + version + ".zip")
-            download(asset["browser_download_url"], zip_path, manifest["browser_asset"]["sha256"])
+            core.about_status(client, "updating")
+            report = core.about_progress(client)
+            download(asset["browser_download_url"], zip_path, manifest["browser_asset"]["sha256"],
+                     maximum=asset["size"], on_progress=lambda size: report(size, asset["size"]))
             build_dir = root / "builds" / (version + "-" + uuid.uuid4().hex[:8])
             staged = False
             try:
@@ -201,11 +208,14 @@ def update_release(client):
                 core.write_json(build_dir / ".download.json", {"owner": "chromo-bro", "files": core.tree_manifest(build_dir)})
                 with core.exclusive_lock(core.install_lock(client)):
                     core.write_json(root / "pending.json", pending)
+                    core.about_status(client, "ready")
                 staged = True
             finally:
                 zip_path.unlink(missing_ok=True)
                 if not staged and build_dir.exists():
                     core.safe_remove_tree(build_dir, root / "builds")
+        else:
+            core.about_status(client, "ready")
         installed_now = core.install_pending(client)
         if installed_now:
             cleanup_downloads(client)

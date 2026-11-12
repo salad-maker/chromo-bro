@@ -1,0 +1,156 @@
+diff --git a/chrome/browser/ui/webui/help/version_updater_basic.cc b/chrome/browser/ui/webui/help/version_updater_basic.cc
+index ebcef5637b150..c89b4e95b07a7 100644
+--- a/chrome/browser/ui/webui/help/version_updater_basic.cc
++++ b/chrome/browser/ui/webui/help/version_updater_basic.cc
+@@ -3,14 +3,99 @@
+ // found in the LICENSE file.
+ 
+ #include <memory>
++#include <optional>
+ #include <string>
++#include <utility>
+ 
+ #include "chrome/browser/ui/webui/help/version_updater.h"
+ #include "chrome/browser/upgrade_detector/upgrade_detector.h"
+ 
++#if BUILDFLAG(IS_WIN)
++#include "base/base_paths.h"
++#include "base/containers/span.h"
++#include "base/files/file.h"
++#include "base/files/file_path.h"
++#include "base/files/file_util.h"
++#include "base/functional/bind.h"
++#include "base/json/json_reader.h"
++#include "base/memory/weak_ptr.h"
++#include "base/path_service.h"
++#include "base/process/process.h"
++#include "base/task/thread_pool.h"
++#include "base/time/time.h"
++#include "base/timer/timer.h"
++#endif
++
+ namespace {
+ 
+-// Bare bones implementation just checks if a new version is ready.
++#if BUILDFLAG(IS_WIN)
++struct ChromoUpdateStatus {
++  VersionUpdater::Status status = VersionUpdater::DISABLED;
++  int progress = 0;
++  std::u16string message;
++
++  bool operator==(const ChromoUpdateStatus&) const = default;
++};
++
++ChromoUpdateStatus ReadChromoUpdateStatus() {
++  base::FilePath exe_dir;
++  if (!base::PathService::Get(base::DIR_EXE, &exe_dir)) {
++    return {};
++  }
++  const base::FilePath root = exe_dir.DirName();
++  if (!base::PathExists(root.AppendASCII("runtime").AppendASCII("client.json"))) {
++    return {};
++  }
++  base::File file(root.AppendASCII(".chromo").AppendASCII("about-update.json"),
++                  base::File::FLAG_OPEN | base::File::FLAG_READ |
++                      base::File::FLAG_WIN_SHARE_DELETE);
++  base::File::Info info;
++  if (!file.IsValid() || !file.GetInfo(&info) || info.size <= 0 || info.size > 4096) {
++    return {VersionUpdater::DEFERRED, 0, u"Waiting for Chromo to check for updates."};
++  }
++  std::string contents(info.size, '\0');
++  if (!file.ReadAtCurrentPosAndCheck(base::as_writable_byte_span(contents))) {
++    return {};
++  }
++  auto state = base::JSONReader::ReadDict(contents, base::JSON_PARSE_RFC);
++  if (!state || state->FindInt("schema") != 1) {
++    return {};
++  }
++  const std::string* phase = state->FindString("phase");
++  if (!phase) {
++    return {};
++  }
++  if (*phase == "checking" || *phase == "updating") {
++    const int pid = state->FindInt("pid").value_or(0);
++    const base::Process process = pid > 0 ? base::Process::Open(pid) : base::Process();
++    if (!process.IsValid() || !process.IsRunning() ||
++        process.CreationTime() > info.last_modified) {
++      return {VersionUpdater::DEFERRED, 0,
++              u"The Chromo update was interrupted. Run chromo update to retry."};
++    }
++    if (*phase == "checking") {
++      return {VersionUpdater::CHECKING, 0, {}};
++    }
++    const int progress = state->FindInt("progress").value_or(0);
++    return {VersionUpdater::UPDATING,
++            progress > 0 && progress <= 100 ? progress : 0, {}};
++  }
++  if (*phase == "current" &&
++      base::Time::Now() - info.last_modified <= base::Hours(48)) {
++    return {VersionUpdater::UPDATED, 0, {}};
++  }
++  if (*phase == "ready") {
++    return {VersionUpdater::DEFERRED, 0,
++            u"Update ready. Close Chromium and open Chromo to install it."};
++  }
++  if (*phase == "failed") {
++    return {VersionUpdater::FAILED_DOWNLOAD, 0,
++            u"Chromo could not update Chromium. Run chromo status for details."};
++  }
++  return {VersionUpdater::DEFERRED, 0, u"Waiting for Chromo to check for updates."};
++}
++#endif  // BUILDFLAG(IS_WIN)
++
+ class VersionUpdaterBasic : public VersionUpdater {
+  public:
+   VersionUpdaterBasic(const VersionUpdaterBasic&) = delete;
+@@ -18,13 +103,49 @@ class VersionUpdaterBasic : public VersionUpdater {
+   VersionUpdaterBasic() = default;
+   ~VersionUpdaterBasic() override = default;
+ 
+-  // VersionUpdater implementation.
+   void CheckForUpdate(StatusCallback callback, PromoteCallback) override {
++#if BUILDFLAG(IS_WIN)
++    weak_factory_.InvalidateWeakPtrs();
++    timer_.Stop();
++    last_status_.reset();
++    callback_ = std::move(callback);
++    Poll();
++#else
+     const Status status = UpgradeDetector::GetInstance()->is_upgrade_available()
+                               ? NEARLY_UPDATED
+                               : DISABLED;
+     callback.Run(status, 0, false, false, std::string(), 0, std::u16string());
++#endif
+   }
++
++#if BUILDFLAG(IS_WIN)
++ private:
++  void Poll() {
++    base::ThreadPool::PostTaskAndReplyWithResult(
++        FROM_HERE, {base::MayBlock(), base::TaskPriority::USER_VISIBLE},
++        base::BindOnce(&ReadChromoUpdateStatus),
++        base::BindOnce(&VersionUpdaterBasic::OnStatus,
++                       weak_factory_.GetWeakPtr()));
++  }
++
++  void OnStatus(ChromoUpdateStatus status) {
++    if (status.status == DISABLED &&
++        UpgradeDetector::GetInstance()->is_upgrade_available()) {
++      status.status = NEARLY_UPDATED;
++    }
++    timer_.Start(FROM_HERE, base::Seconds(2), this, &VersionUpdaterBasic::Poll);
++    if (last_status_ != status) {
++      last_status_ = status;
++      callback_.Run(status.status, status.progress, false, false, std::string(),
++                    0, status.message);
++    }
++  }
++
++  StatusCallback callback_;
++  std::optional<ChromoUpdateStatus> last_status_;
++  base::OneShotTimer timer_;
++  base::WeakPtrFactory<VersionUpdaterBasic> weak_factory_{this};
++#endif
+ };
+ 
+ }  // namespace
